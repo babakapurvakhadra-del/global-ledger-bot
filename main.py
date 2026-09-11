@@ -5,27 +5,22 @@ from threading import Thread
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
-# ================= CONFIG =================
 BOT_TOKEN = "8728458795:AAGSXrt0g7rRIaKhJEhepcV_m4rDUE9AaZk"
 
-# Store per group data
 group_data = {}
-
-# ==========================================
 
 logging.basicConfig(level=logging.INFO)
 
-# Flask keep alive
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Bot is running"
+    return "Bot running"
 
 def run_flask():
     app.run(host="0.0.0.0", port=8080)
 
-# ==========================================
+# ==========================
 
 def safe_eval(expr):
     try:
@@ -38,52 +33,113 @@ def get_group(chat_id):
         group_data[chat_id] = {
             "base_currency": "INR",
             "target_currency": "USD",
-            "rate": 90.0,
-            "balance": 0.0,
-            "deposit": 0.0,
-            "withdraw": 0.0
+            "rate": 90,
+            "balance": 0,
+            "deposit": 0,
+            "withdraw": 0,
+            "allowed_users": []
         }
     return group_data[chat_id]
 
-# ==========================================
+def is_allowed(user_id, data):
+    return user_id in data["allowed_users"]
 
-async def set_currency(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ==========================
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    await update.message.reply_text(f"Your ID: {user_id}")
+
+# ==========================
+
+async def add_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
     data = get_group(chat_id)
 
-    if not context.args:
-        await update.message.reply_text("Usage: /setcurrency USD")
+    # First user becomes owner
+    if not data["allowed_users"]:
+        data["allowed_users"].append(user_id)
+        await update.message.reply_text("✅ You are now owner")
         return
 
-    currency = context.args[0].upper()
-    data["target_currency"] = currency
-
-    await update.message.reply_text(f"✅ Currency set to {currency}")
-
-async def set_rate(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    data = get_group(chat_id)
-
-    if not context.args:
-        await update.message.reply_text("Usage: /setrate 95")
+    if not is_allowed(user_id, data):
         return
 
     try:
-        rate = float(context.args[0])
-        data["rate"] = rate
-        await update.message.reply_text(f"✅ Rate set to {rate}")
+        new_user = int(context.args[0])
+        if new_user not in data["allowed_users"]:
+            data["allowed_users"].append(new_user)
+            await update.message.reply_text("✅ User added")
     except:
-        await update.message.reply_text("❌ Invalid rate")
+        await update.message.reply_text("Usage: /adduser USER_ID")
 
-# ==========================================
+# ==========================
+
+async def remove_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    data = get_group(chat_id)
+
+    if not is_allowed(user_id, data):
+        return
+
+    try:
+        rem_user = int(context.args[0])
+        if rem_user in data["allowed_users"]:
+            data["allowed_users"].remove(rem_user)
+            await update.message.reply_text("❌ User removed")
+    except:
+        await update.message.reply_text("Usage: /removeuser USER_ID")
+
+# ==========================
+
+async def list_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    data = get_group(update.effective_chat.id)
+    await update.message.reply_text(f"Allowed Users:\n{data['allowed_users']}")
+
+# ==========================
+
+async def set_currency(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    data = get_group(chat_id)
+
+    if not is_allowed(user_id, data):
+        return
+
+    if not context.args:
+        return
+
+    data["target_currency"] = context.args[0].upper()
+    await update.message.reply_text("✅ Currency updated")
+
+async def set_rate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    data = get_group(chat_id)
+
+    if not is_allowed(user_id, data):
+        return
+
+    try:
+        data["rate"] = float(context.args[0])
+        await update.message.reply_text("✅ Rate updated")
+    except:
+        pass
+
+# ==========================
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.replace(" ", "")
     chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
     data = get_group(chat_id)
 
-    match = re.match(r'^([+-])\(?(.+?)\)?$', text)
+    if not is_allowed(user_id, data):
+        return
 
+    match = re.match(r'^([+-])\(?(.+?)\)?$', text)
     if not match:
         return
 
@@ -91,9 +147,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     expr = match.group(2)
 
     amount = safe_eval(expr)
-
     if amount is None:
-        await update.message.reply_text("❌ Invalid calculation")
         return
 
     amount = float(amount)
@@ -110,46 +164,30 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     converted = amount / data["rate"]
     balance_converted = data["balance"] / data["rate"]
 
-    response = f"""
-📊 Overseas Customer Service
+    msg = f"""
+{action}: {amount:.2f} INR
+Converted: {converted:.2f} {data['target_currency']}
 
-{action}: {amount:,.2f} {data['base_currency']}
-Converted: {converted:,.2f} {data['target_currency']}
-
-------------------------------
-Balance: {data['balance']:,.2f} {data['base_currency']}
-Balance: {balance_converted:,.2f} {data['target_currency']}
-
-Total Deposit: {data['deposit']:,.2f}
-Total Withdraw: {data['withdraw']:,.2f}
-
-Rate: 1 {data['target_currency']} = {data['rate']} {data['base_currency']}
+Balance: {data['balance']:.2f} INR
+Balance: {balance_converted:.2f} {data['target_currency']}
 """
+    await update.message.reply_text(msg)
 
-    await update.message.reply_text(response)
-
-# ==========================================
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "📌 Use:\n+500\n-200\n+(100*2)\n\nCommands:\n/setcurrency USD\n/setrate 95"
-    )
-
-# ==========================================
+# ==========================
 
 def main():
     app_bot = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app_bot.add_handler(CommandHandler("start", start))
+    app_bot.add_handler(CommandHandler("adduser", add_user))
+    app_bot.add_handler(CommandHandler("removeuser", remove_user))
+    app_bot.add_handler(CommandHandler("users", list_users))
     app_bot.add_handler(CommandHandler("setcurrency", set_currency))
     app_bot.add_handler(CommandHandler("setrate", set_rate))
     app_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     Thread(target=run_flask).start()
-
     app_bot.run_polling()
-
-# ==========================================
 
 if __name__ == "__main__":
     main()
