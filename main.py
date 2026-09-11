@@ -164,14 +164,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     converted = amount / data["rate"]
     balance_converted = data["balance"] / data["rate"]
 
-    msg = f"""
-{action}: {amount:.2f} INR
-Converted: {converted:.2f} {data['target_currency']}
+    response = f"""
+📊 Overseas Customer Service
 
-Balance: {data['balance']:.2f} INR
-Balance: {balance_converted:.2f} {data['target_currency']}
+{action}: {amount:,.2f} {data['base_currency']}
+Converted: {converted:,.2f} {data['target_currency']}
+
+------------------------------
+Balance: {data['balance']:,.2f} {data['base_currency']}
+Balance: {balance_converted:,.2f} {data['target_currency']}
+
+Total Deposit: {data['deposit']:,.2f}
+Total Withdraw: {data['withdraw']:,.2f}
+
+Rate: 1 {data['target_currency']} = {data['rate']} {data['base_currency']}
 """
-    await update.message.reply_text(msg)
+    await update.message.reply_text(response)
 
 # ==========================
 
