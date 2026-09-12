@@ -94,7 +94,42 @@ async def add_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except:
         await update.message.reply_text("Usage: /adduser USER_ID")
 
-# ================= TRANSACTIONS =================
+# ---- SETTINGS ----
+
+async def set_currency(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = str(update.effective_chat.id)
+    user_id = update.effective_user.id
+    data = get_group(chat_id)
+
+    if not is_allowed(user_id, data):
+        await update.message.reply_text("❌ Not allowed")
+        return
+
+    if not context.args:
+        return
+
+    data["target_currency"] = context.args[0].upper()
+    save_data()
+
+    await update.message.reply_text(f"✅ Currency set to {data['target_currency']}")
+
+async def set_rate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = str(update.effective_chat.id)
+    user_id = update.effective_user.id
+    data = get_group(chat_id)
+
+    if not is_allowed(user_id, data):
+        await update.message.reply_text("❌ Not allowed")
+        return
+
+    try:
+        data["rate"] = float(context.args[0])
+        save_data()
+        await update.message.reply_text(f"✅ Rate set to {data['rate']}")
+    except:
+        await update.message.reply_text("❌ Invalid rate")
+
+# ---- TRANSACTIONS ----
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.replace(" ", "")
@@ -118,7 +153,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     amount = float(amount)
 
-    # ✅ FIXED INDENTATION + COUNT LOGIC
     if sign == "+":
         data["balance"] += amount
         data["deposit"] += amount
@@ -148,9 +182,9 @@ Balance: {balance_converted:,.2f} {data['target_currency']}
 Total Deposit: {data['deposit']:,.2f}
 Total Withdraw: {data['withdraw']:,.2f}
 
-Total deposit count: {data.get('deposit_count', 0)}
-Total withdrawal count: {data.get('withdraw_count', 0)}
-Total count: {data.get('deposit_count', 0) + data.get('withdraw_count', 0)}
+Total deposit count: {data['deposit_count']}
+Total withdrawal count: {data['withdraw_count']}
+Total count: {data['deposit_count'] + data['withdraw_count']}
 
 Rate: 1 {data['target_currency']} = {data['rate']} {data['base_currency']}
 """
@@ -166,6 +200,8 @@ def main():
 
     app_bot.add_handler(CommandHandler("start", start))
     app_bot.add_handler(CommandHandler("adduser", add_user))
+    app_bot.add_handler(CommandHandler("setcurrency", set_currency))
+    app_bot.add_handler(CommandHandler("setrate", set_rate))
     app_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     Thread(target=run_flask).start()
