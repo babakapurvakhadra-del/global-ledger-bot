@@ -133,8 +133,30 @@ async def track_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
 
     if chat.type in ["group", "supergroup"]:
+        chat_id = str(chat.id)
+        chat_title = chat.title
+
+        is_new = chat_id not in group_data
+
         get_group(chat.id, chat.title)
         save_data()
+
+        # 🔔 NOTIFY OWNER WHEN NEW GROUP ADDED
+        if is_new:
+            OWNER_ID = 6609362058  # 👈 PUT YOUR USER ID HERE
+
+            try:
+                await context.bot.send_message(
+                    chat_id=OWNER_ID,
+                    text=f"""🚀 Bot added in new group!
+
+📌 Group Name: {chat_title}
+🆔 Group ID: {chat_id}
+
+Now you can use /panel → broadcast"""
+                )
+            except Exception as e:
+                print("Notify error:", e)
 
 # ================= START =================
 
