@@ -57,6 +57,9 @@ def get_group(chat_id, title=None):
     if chat_id not in group_data:
         group_data[chat_id] = {
             "title": title or f"Group {chat_id}",
+            "base_currency": "INR",
+            "target_currency": "USD",
+            "rate": 90.0,
             "balance": 0.0,
             "deposit": 0.0,
             "withdraw": 0.0,
@@ -124,7 +127,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.edit_message_text(msg)
 
-# ================= TRACK GROUP (SAFE) =================
+# ================= TRACK GROUP =================
 
 async def track_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
@@ -145,7 +148,6 @@ async def add_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     data = get_group(chat_id, update.effective_chat.title)
 
-    # OWNER AUTO SET
     if not data["allowed_users"]:
         data["allowed_users"].append(user_id)
         save_data()
@@ -165,6 +167,23 @@ async def add_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except:
         await update.message.reply_text("Usage: /adduser USER_ID")
 
+# ================= SET CURRENCY =================
+
+async def set_currency(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = str(update.effective_chat.id)
+    user_id = update.effective_user.id
+    data = get_group(chat_id, update.effective_chat.title)
+
+    if user_id not in data["allowed_users"]:
+        return
+
+    try:
+        data["target_currency"] = context.args[0].upper()
+        save_data()
+        await update.message.reply_text(f"✅ Currency set to {data['target_currency']}")
+    except:
+        await update.message.reply_text("Usage: /setcurrency USD")
+
 # ================= SET RATE =================
 
 async def set_rate(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -178,11 +197,11 @@ async def set_rate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         data["rate"] = float(context.args[0])
         save_data()
-        await update.message.reply_text("✅ Rate updated")
+        await update.message.reply_text(f"✅ Rate set to {data['rate']}")
     except:
         await update.message.reply_text("❌ Invalid rate")
 
-# ================= TRANSACTIONS + BROADCAST =================
+# ================= MAIN LOGIC =================
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global broadcast_state
@@ -192,7 +211,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     data = get_group(chat_id, update.effective_chat.title)
 
-    # ================= BROADCAST =================
+    # ===== BROADCAST =====
     if user_id in broadcast_state and broadcast_state[user_id].get("step") == 2:
 
         msg = text
@@ -214,14 +233,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         del broadcast_state[user_id]
         return
 
-    # ================= TRANSACTIONS =================
+    # ===== TRANSACTION =====
 
     if user_id not in data["allowed_users"]:
         return
 
     text = text.replace(" ", "")
-
     match = re.match(r'^([+-])\(?(.+?)\)?$', text)
+
     if not match:
         return
 
@@ -238,20 +257,36 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data["balance"] += amount
         data["deposit"] += amount
         data["deposit_count"] += 1
+        action = "Received"
     else:
         data["balance"] -= amount
         data["withdraw"] += amount
         data["withdraw_count"] += 1
+        action = "Paid"
+
+    converted = amount / data["rate"]
+    balance_converted = data["balance"] / data["rate"]
 
     save_data()
 
     await update.message.reply_text(f"""
-📊 Updated
+📊 Overseas Customer Service
 
-Balance: {data['balance']}
-Deposit Count: {data['deposit_count']}
-Withdraw Count: {data['withdraw_count']}
-Total: {data['deposit_count'] + data['withdraw_count']}
+{action}: {amount:,.2f} INR
+Converted: {converted:,.2f} {data['target_currency']}
+
+------------------------------
+Balance: {data['balance']:,.2f} INR
+Balance: {balance_converted:,.2f} {data['target_currency']}
+
+Total Deposit: {data['deposit']:,.2f}
+Total Withdraw: {data['withdraw']:,.2f}
+
+Total deposit count: {data['deposit_count']}
+Total withdrawal count: {data['withdraw_count']}
+Total count: {data['deposit_count'] + data['withdraw_count']}
+
+Rate: 1 {data['target_currency']} = {data['rate']} INR
 """)
 
 # ================= MAIN =================
@@ -264,11 +299,11 @@ def main():
     app_bot.add_handler(CommandHandler("start", start))
     app_bot.add_handler(CommandHandler("panel", panel))
     app_bot.add_handler(CommandHandler("adduser", add_user))
+    app_bot.add_handler(CommandHandler("setcurrency", set_currency))
     app_bot.add_handler(CommandHandler("setrate", set_rate))
 
     app_bot.add_handler(CallbackQueryHandler(button_handler))
 
-    # IMPORTANT ORDER FIX
     app_bot.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, track_group))
     app_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
