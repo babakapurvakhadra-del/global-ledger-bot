@@ -5,12 +5,18 @@ import os
 from flask import Flask
 from threading import Thread
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler,
+    MessageHandler, ContextTypes, filters
+)
 
 BOT_TOKEN = "8728458795:AAGSXrt0g7rRIaKhJEhepcV_m4rDUE9AaZk"
 
 DATA_FILE = "data.json"
 group_data = {}
+
+# 🔥 Broadcast state memory
+broadcast_state = {}
 
 logging.basicConfig(level=logging.INFO)
 
@@ -63,13 +69,27 @@ def get_group(chat_id):
 def is_allowed(user_id, data):
     return user_id in data["allowed_users"]
 
-# ================= COMMANDS =================
+# ================= BROADCAST COMMAND =================
+
+async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+
+    broadcast_state[user_id] = {"step": 1}
+
+    await update.message.reply_text(
+        "📣 BROADCAST MODE ACTIVATED\n\n"
+        "Send target:\n"
+        "👉 ALL (for all groups)\n"
+        "👉 OR send group chat_id"
+    )
+
+# ================= START =================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     await update.message.reply_text(f"Your ID: {user_id}")
 
-# ---- PERMISSIONS ----
+# ================= USER CONTROL =================
 
 async def add_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = str(update.effective_chat.id)
@@ -94,7 +114,7 @@ async def add_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except:
         await update.message.reply_text("Usage: /adduser USER_ID")
 
-# ---- SETTINGS ----
+# ================= SETTINGS =================
 
 async def set_currency(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = str(update.effective_chat.id)
@@ -103,9 +123,6 @@ async def set_currency(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not is_allowed(user_id, data):
         await update.message.reply_text("❌ Not allowed")
-        return
-
-    if not context.args:
         return
 
     data["target_currency"] = context.args[0].upper()
@@ -129,16 +146,57 @@ async def set_rate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except:
         await update.message.reply_text("❌ Invalid rate")
 
-# ---- TRANSACTIONS ----
+# ================= TRANSACTIONS + BROADCAST FLOW =================
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.replace(" ", "")
-    chat_id = str(update.effective_chat.id)
+    global broadcast_state
+
+    text = update.message.text.strip()
+    chat_id = update.effective_chat.id
     user_id = update.effective_user.id
+
     data = get_group(chat_id)
+
+    # ================= BROADCAST FLOW =================
+    if user_id in broadcast_state:
+        state = broadcast_state[user_id]
+
+        # STEP 1: target group
+        if state["step"] == 1:
+            state["target"] = text
+            state["step"] = 2
+
+            await update.message.reply_text("✍️ Now send the message to broadcast")
+            return
+
+        # STEP 2: send message
+        elif state["step"] == 2:
+            msg = text
+            target = broadcast_state[user_id]["target"]
+
+            # ALL groups
+            if target.upper() == "ALL":
+                for gid in group_data.keys():
+                    try:
+                        await context.bot.send_message(chat_id=int(gid), text=msg)
+                    except:
+                        pass
+            else:
+                try:
+                    await context.bot.send_message(chat_id=int(target), text=msg)
+                except:
+                    pass
+
+            await update.message.reply_text("✅ Broadcast sent successfully")
+            del broadcast_state[user_id]
+            return
+
+    # ================= TRANSACTION SYSTEM =================
 
     if not is_allowed(user_id, data):
         return
+
+    text = text.replace(" ", "")
 
     match = re.match(r'^([+-])\(?(.+?)\)?$', text)
     if not match:
@@ -202,6 +260,8 @@ def main():
     app_bot.add_handler(CommandHandler("adduser", add_user))
     app_bot.add_handler(CommandHandler("setcurrency", set_currency))
     app_bot.add_handler(CommandHandler("setrate", set_rate))
+    app_bot.add_handler(CommandHandler("broadcast", broadcast))
+
     app_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     Thread(target=run_flask).start()
