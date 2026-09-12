@@ -7,7 +7,7 @@ from threading import Thread
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
-BOT_TOKEN = "8728458795:AAGSXrt0g7rRIaKhJEhepcV_m4rDUE9AaZk"
+BOT_TOKEN = "YOUR_BOT_TOKEN"
 
 DATA_FILE = "data.json"
 group_data = {}
@@ -53,10 +53,10 @@ def get_group(chat_id):
             "rate": 90.0,
             "balance": 0.0,
             "deposit": 0.0,
-"withdraw": 0.0,
-"deposit_count": 0,
-"withdraw_count": 0,
-"allowed_users": []
+            "withdraw": 0.0,
+            "deposit_count": 0,
+            "withdraw_count": 0,
+            "allowed_users": []
         }
     return group_data[chat_id]
 
@@ -76,7 +76,6 @@ async def add_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     data = get_group(chat_id)
 
-    # First user becomes owner
     if not data["allowed_users"]:
         data["allowed_users"].append(user_id)
         save_data()
@@ -95,60 +94,7 @@ async def add_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except:
         await update.message.reply_text("Usage: /adduser USER_ID")
 
-async def remove_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = str(update.effective_chat.id)
-    user_id = update.effective_user.id
-    data = get_group(chat_id)
-
-    if not is_allowed(user_id, data):
-        return
-
-    try:
-        rem_user = int(context.args[0])
-        if rem_user in data["allowed_users"]:
-            data["allowed_users"].remove(rem_user)
-            save_data()
-            await update.message.reply_text("❌ User removed")
-    except:
-        await update.message.reply_text("Usage: /removeuser USER_ID")
-
-async def list_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    data = get_group(str(update.effective_chat.id))
-    await update.message.reply_text(f"Allowed Users:\n{data['allowed_users']}")
-
-# ---- SETTINGS ----
-
-async def set_currency(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = str(update.effective_chat.id)
-    user_id = update.effective_user.id
-    data = get_group(chat_id)
-
-    if not is_allowed(user_id, data):
-        return
-
-    if not context.args:
-        return
-
-    data["target_currency"] = context.args[0].upper()
-    save_data()
-    await update.message.reply_text("✅ Currency updated")
-
-async def set_rate(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = str(update.effective_chat.id)
-    user_id = update.effective_user.id
-    data = get_group(chat_id)
-
-    if not is_allowed(user_id, data):
-        return
-
-    try:
-        data["rate"] = float(context.args[0])
-        save_data()
-        await update.message.reply_text("✅ Rate updated")
-    except:
-        pass
-
-# ---- TRANSACTIONS ----
+# ================= TRANSACTIONS =================
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.replace(" ", "")
@@ -172,16 +118,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     amount = float(amount)
 
+    # ✅ FIXED INDENTATION + COUNT LOGIC
     if sign == "+":
-    data["balance"] += amount
-    data["deposit"] += amount
-    data["deposit_count"] += 1   # ✅ added
-    action = "Received"
-else:
-    data["balance"] -= amount
-    data["withdraw"] += amount
-    data["withdraw_count"] += 1  # ✅ added
-    action = "Paid"
+        data["balance"] += amount
+        data["deposit"] += amount
+        data["deposit_count"] += 1
+        action = "Received"
+    else:
+        data["balance"] -= amount
+        data["withdraw"] += amount
+        data["withdraw_count"] += 1
+        action = "Paid"
 
     converted = amount / data["rate"]
     balance_converted = data["balance"] / data["rate"]
@@ -204,6 +151,7 @@ Total Withdraw: {data['withdraw']:,.2f}
 Total deposit count: {data.get('deposit_count', 0)}
 Total withdrawal count: {data.get('withdraw_count', 0)}
 Total count: {data.get('deposit_count', 0) + data.get('withdraw_count', 0)}
+
 Rate: 1 {data['target_currency']} = {data['rate']} {data['base_currency']}
 """
 
@@ -218,10 +166,6 @@ def main():
 
     app_bot.add_handler(CommandHandler("start", start))
     app_bot.add_handler(CommandHandler("adduser", add_user))
-    app_bot.add_handler(CommandHandler("removeuser", remove_user))
-    app_bot.add_handler(CommandHandler("users", list_users))
-    app_bot.add_handler(CommandHandler("setcurrency", set_currency))
-    app_bot.add_handler(CommandHandler("setrate", set_rate))
     app_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     Thread(target=run_flask).start()
