@@ -53,8 +53,10 @@ def get_group(chat_id):
             "rate": 90.0,
             "balance": 0.0,
             "deposit": 0.0,
-            "withdraw": 0.0,
-            "allowed_users": []
+"withdraw": 0.0,
+"deposit_count": 0,
+"withdraw_count": 0,
+"allowed_users": []
         }
     return group_data[chat_id]
 
@@ -171,13 +173,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     amount = float(amount)
 
     if sign == "+":
-        data["balance"] += amount
-        data["deposit"] += amount
-        action = "Received"
-    else:
-        data["balance"] -= amount
-        data["withdraw"] += amount
-        action = "Paid"
+    data["balance"] += amount
+    data["deposit"] += amount
+    data["deposit_count"] += 1   # ✅ added
+    action = "Received"
+else:
+    data["balance"] -= amount
+    data["withdraw"] += amount
+    data["withdraw_count"] += 1  # ✅ added
+    action = "Paid"
 
     converted = amount / data["rate"]
     balance_converted = data["balance"] / data["rate"]
@@ -197,6 +201,9 @@ Balance: {balance_converted:,.2f} {data['target_currency']}
 Total Deposit: {data['deposit']:,.2f}
 Total Withdraw: {data['withdraw']:,.2f}
 
+Total deposit count: {data.get('deposit_count', 0)}
+Total withdrawal count: {data.get('withdraw_count', 0)}
+Total count: {data.get('deposit_count', 0) + data.get('withdraw_count', 0)}
 Rate: 1 {data['target_currency']} = {data['rate']} {data['base_currency']}
 """
 
