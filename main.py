@@ -1,12 +1,15 @@
 import logging
 import re
+import json
+import os
 from flask import Flask
 from threading import Thread
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
-BOT_TOKEN = "8728458795:AAGSXrt0g7rRIaKhJEhepcV_m4rDUE9AaZk"
+BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"
 
+DATA_FILE = "data.json"
 group_data = {}
 
 logging.basicConfig(level=logging.INFO)
@@ -20,7 +23,19 @@ def home():
 def run_flask():
     app.run(host="0.0.0.0", port=8080)
 
-# ==========================
+# ================= STORAGE =================
+
+def load_data():
+    global group_data
+    if os.path.exists(DATA_FILE):
+        with open(DATA_FILE, "r") as f:
+            group_data.update(json.load(f))
+
+def save_data():
+    with open(DATA_FILE, "w") as f:
+        json.dump(group_data, f)
+
+# ================= CORE =================
 
 def safe_eval(expr):
     try:
@@ -29,14 +44,16 @@ def safe_eval(expr):
         return None
 
 def get_group(chat_id):
+    chat_id = str(chat_id)
+
     if chat_id not in group_data:
         group_data[chat_id] = {
             "base_currency": "INR",
             "target_currency": "USD",
-            "rate": 90,
-            "balance": 0,
-            "deposit": 0,
-            "withdraw": 0,
+            "rate": 90.0,
+            "balance": 0.0,
+            "deposit": 0.0,
+            "withdraw": 0.0,
             "allowed_users": []
         }
     return group_data[chat_id]
@@ -44,22 +61,23 @@ def get_group(chat_id):
 def is_allowed(user_id, data):
     return user_id in data["allowed_users"]
 
-# ==========================
+# ================= COMMANDS =================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     await update.message.reply_text(f"Your ID: {user_id}")
 
-# ==========================
+# ---- PERMISSIONS ----
 
 async def add_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
+    chat_id = str(update.effective_chat.id)
     user_id = update.effective_user.id
     data = get_group(chat_id)
 
     # First user becomes owner
     if not data["allowed_users"]:
         data["allowed_users"].append(user_id)
+        save_data()
         await update.message.reply_text("✅ You are now owner")
         return
 
@@ -70,14 +88,13 @@ async def add_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
         new_user = int(context.args[0])
         if new_user not in data["allowed_users"]:
             data["allowed_users"].append(new_user)
+            save_data()
             await update.message.reply_text("✅ User added")
     except:
         await update.message.reply_text("Usage: /adduser USER_ID")
 
-# ==========================
-
 async def remove_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
+    chat_id = str(update.effective_chat.id)
     user_id = update.effective_user.id
     data = get_group(chat_id)
 
@@ -88,20 +105,19 @@ async def remove_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
         rem_user = int(context.args[0])
         if rem_user in data["allowed_users"]:
             data["allowed_users"].remove(rem_user)
+            save_data()
             await update.message.reply_text("❌ User removed")
     except:
         await update.message.reply_text("Usage: /removeuser USER_ID")
 
-# ==========================
-
 async def list_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    data = get_group(update.effective_chat.id)
+    data = get_group(str(update.effective_chat.id))
     await update.message.reply_text(f"Allowed Users:\n{data['allowed_users']}")
 
-# ==========================
+# ---- SETTINGS ----
 
 async def set_currency(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
+    chat_id = str(update.effective_chat.id)
     user_id = update.effective_user.id
     data = get_group(chat_id)
 
@@ -112,10 +128,11 @@ async def set_currency(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     data["target_currency"] = context.args[0].upper()
+    save_data()
     await update.message.reply_text("✅ Currency updated")
 
 async def set_rate(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
+    chat_id = str(update.effective_chat.id)
     user_id = update.effective_user.id
     data = get_group(chat_id)
 
@@ -124,15 +141,16 @@ async def set_rate(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         data["rate"] = float(context.args[0])
+        save_data()
         await update.message.reply_text("✅ Rate updated")
     except:
         pass
 
-# ==========================
+# ---- TRANSACTIONS ----
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.replace(" ", "")
-    chat_id = update.effective_chat.id
+    chat_id = str(update.effective_chat.id)
     user_id = update.effective_user.id
     data = get_group(chat_id)
 
@@ -164,6 +182,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     converted = amount / data["rate"]
     balance_converted = data["balance"] / data["rate"]
 
+    save_data()
+
     response = f"""
 📊 Overseas Customer Service
 
@@ -179,11 +199,14 @@ Total Withdraw: {data['withdraw']:,.2f}
 
 Rate: 1 {data['target_currency']} = {data['rate']} {data['base_currency']}
 """
+
     await update.message.reply_text(response)
 
-# ==========================
+# ================= MAIN =================
 
 def main():
+    load_data()
+
     app_bot = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app_bot.add_handler(CommandHandler("start", start))
