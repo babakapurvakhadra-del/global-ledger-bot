@@ -15,7 +15,6 @@ BOT_TOKEN = "8728458795:AAGSXrt0g7rRIaKhJEhepcV_m4rDUE9AaZk"
 DATA_FILE = "data.json"
 group_data = {}
 
-# 🔥 Broadcast state memory
 broadcast_state = {}
 
 logging.basicConfig(level=logging.INFO)
@@ -49,11 +48,12 @@ def safe_eval(expr):
     except:
         return None
 
-def get_group(chat_id):
+def get_group(chat_id, chat_title=None):
     chat_id = str(chat_id)
 
     if chat_id not in group_data:
         group_data[chat_id] = {
+            "title": chat_title or f"Group {chat_id}",
             "base_currency": "INR",
             "target_currency": "USD",
             "rate": 90.0,
@@ -64,24 +64,30 @@ def get_group(chat_id):
             "withdraw_count": 0,
             "allowed_users": []
         }
+
+    if chat_title:
+        group_data[chat_id]["title"] = chat_title
+
     return group_data[chat_id]
 
 def is_allowed(user_id, data):
     return user_id in data["allowed_users"]
 
-# ================= BROADCAST COMMAND =================
+# ================= BROADCAST =================
 
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
     broadcast_state[user_id] = {"step": 1}
 
-    await update.message.reply_text(
-        "📣 BROADCAST MODE ACTIVATED\n\n"
-        "Send target:\n"
-        "👉 ALL (for all groups)\n"
-        "👉 OR send group chat_id"
-    )
+    msg = "📣 SELECT GROUP TO BROADCAST\n\n"
+
+    for gid, gdata in group_data.items():
+        msg += f"👉 {gdata.get('title','Group')}\n"
+
+    msg += "\n👉 Type ALL for every group"
+
+    await update.message.reply_text(msg)
 
 # ================= START =================
 
@@ -89,7 +95,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     await update.message.reply_text(f"Your ID: {user_id}")
 
-# ================= USER CONTROL =================
+# ================= USERS =================
 
 async def add_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = str(update.effective_chat.id)
@@ -102,7 +108,7 @@ async def add_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("✅ You are now owner")
         return
 
-    if not is_allowed(user_id, data):
+    if user_id not in data["allowed_users"]:
         return
 
     try:
@@ -121,8 +127,7 @@ async def set_currency(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     data = get_group(chat_id)
 
-    if not is_allowed(user_id, data):
-        await update.message.reply_text("❌ Not allowed")
+    if user_id not in data["allowed_users"]:
         return
 
     data["target_currency"] = context.args[0].upper()
@@ -135,8 +140,7 @@ async def set_rate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     data = get_group(chat_id)
 
-    if not is_allowed(user_id, data):
-        await update.message.reply_text("❌ Not allowed")
+    if user_id not in data["allowed_users"]:
         return
 
     try:
@@ -154,22 +158,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
+    chat_title = update.effective_chat.title
 
-    data = get_group(chat_id)
+    data = get_group(chat_id, chat_title)
 
     # ================= BROADCAST FLOW =================
     if user_id in broadcast_state:
         state = broadcast_state[user_id]
 
-        # STEP 1: target group
         if state["step"] == 1:
             state["target"] = text
             state["step"] = 2
 
-            await update.message.reply_text("✍️ Now send the message to broadcast")
+            await update.message.reply_text("✍️ Now send message to broadcast")
             return
 
-        # STEP 2: send message
         elif state["step"] == 2:
             msg = text
             target = broadcast_state[user_id]["target"]
@@ -181,19 +184,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         await context.bot.send_message(chat_id=int(gid), text=msg)
                     except:
                         pass
-            else:
-                try:
-                    await context.bot.send_message(chat_id=int(target), text=msg)
-                except:
-                    pass
 
-            await update.message.reply_text("✅ Broadcast sent successfully")
+            else:
+                selected_id = None
+
+                for gid, gdata in group_data.items():
+                    if target.lower() in gdata.get("title", "").lower():
+                        selected_id = gid
+                        break
+
+                if selected_id:
+                    await context.bot.send_message(chat_id=int(selected_id), text=msg)
+
+            await update.message.reply_text("✅ Broadcast sent")
             del broadcast_state[user_id]
             return
 
-    # ================= TRANSACTION SYSTEM =================
+    # ================= TRANSACTIONS =================
 
-    if not is_allowed(user_id, data):
+    if user_id not in data["allowed_users"]:
         return
 
     text = text.replace(" ", "")
@@ -227,27 +236,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     save_data()
 
-    response = f"""
+    await update.message.reply_text(f"""
 📊 Overseas Customer Service
 
 {action}: {amount:,.2f} {data['base_currency']}
 Converted: {converted:,.2f} {data['target_currency']}
 
 ------------------------------
-Balance: {data['balance']:,.2f} {data['base_currency']}
-Balance: {balance_converted:,.2f} {data['target_currency']}
+Balance: {data['balance']:,.2f}
+Balance: {balance_converted:,.2f}
 
 Total Deposit: {data['deposit']:,.2f}
 Total Withdraw: {data['withdraw']:,.2f}
 
-Total deposit count: {data['deposit_count']}
-Total withdrawal count: {data['withdraw_count']}
-Total count: {data['deposit_count'] + data['withdraw_count']}
+Deposit Count: {data['deposit_count']}
+Withdraw Count: {data['withdraw_count']}
+Total Count: {data['deposit_count'] + data['withdraw_count']}
 
 Rate: 1 {data['target_currency']} = {data['rate']} {data['base_currency']}
-"""
-
-    await update.message.reply_text(response)
+""")
 
 # ================= MAIN =================
 
