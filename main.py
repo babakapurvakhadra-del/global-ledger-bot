@@ -4,10 +4,11 @@ import json
 import os
 from flask import Flask
 from threading import Thread
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder, CommandHandler,
-    MessageHandler, ContextTypes, filters
+    MessageHandler, CallbackQueryHandler,
+    ContextTypes, filters
 )
 
 BOT_TOKEN = "8728458795:AAGSXrt0g7rRIaKhJEhepcV_m4rDUE9AaZk"
@@ -48,15 +49,12 @@ def safe_eval(expr):
     except:
         return None
 
-def get_group(chat_id, chat_title=None):
+def get_group(chat_id, title=None):
     chat_id = str(chat_id)
 
     if chat_id not in group_data:
         group_data[chat_id] = {
-            "title": chat_title or f"Group {chat_id}",
-            "base_currency": "INR",
-            "target_currency": "USD",
-            "rate": 90.0,
+            "title": title or f"Group {chat_id}",
             "balance": 0.0,
             "deposit": 0.0,
             "withdraw": 0.0,
@@ -65,120 +63,100 @@ def get_group(chat_id, chat_title=None):
             "allowed_users": []
         }
 
-    if chat_title:
-        group_data[chat_id]["title"] = chat_title
+    if title:
+        group_data[chat_id]["title"] = title
 
     return group_data[chat_id]
 
-def is_allowed(user_id, data):
-    return user_id in data["allowed_users"]
+# ================= PANEL =================
 
-# ================= BROADCAST =================
+async def panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton("📣 Broadcast Message", callback_data="broadcast")],
+        [InlineKeyboardButton("📊 View Groups", callback_data="groups")]
+    ]
 
-async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
+    await update.message.reply_text(
+        "🛠 ADMIN PANEL",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
-    broadcast_state[user_id] = {"step": 1}
+# ================= BUTTON HANDLER =================
 
-    msg = "📣 SELECT GROUP TO BROADCAST\n\n"
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
 
-    for gid, gdata in group_data.items():
-        msg += f"👉 {gdata.get('title','Group')}\n"
+    user_id = query.from_user.id
 
-    msg += "\n👉 Type ALL for every group"
+    # START BROADCAST
+    if query.data == "broadcast":
+        broadcast_state[user_id] = {"step": 1}
 
-    await update.message.reply_text(msg)
+        keyboard = []
+
+        for gid, gdata in group_data.items():
+            keyboard.append([
+                InlineKeyboardButton(gdata["title"], callback_data=f"grp_{gid}")
+            ])
+
+        keyboard.append([InlineKeyboardButton("🌍 ALL GROUPS", callback_data="grp_ALL")])
+
+        await query.edit_message_text(
+            "📣 Select Group:",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+    # GROUP SELECTED
+    elif query.data.startswith("grp_"):
+        target = query.data.replace("grp_", "")
+        broadcast_state[user_id]["target"] = target
+        broadcast_state[user_id]["step"] = 2
+
+        await query.edit_message_text("✍️ Now send broadcast message in chat")
+
+    # VIEW GROUPS
+    elif query.data == "groups":
+        msg = "📊 GROUP LIST\n\n"
+        for gid, gdata in group_data.items():
+            msg += f"👉 {gdata['title']}\nID: {gid}\n\n"
+
+        await query.edit_message_text(msg)
+
+# ================= TRACK GROUP =================
+
+async def track_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+
+    if chat.type in ["group", "supergroup"]:
+        get_group(chat.id, chat.title)
+        save_data()
 
 # ================= START =================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    await update.message.reply_text(f"Your ID: {user_id}")
+    await update.message.reply_text("Your ID: " + str(update.effective_user.id))
 
-# ================= USERS =================
-
-async def add_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = str(update.effective_chat.id)
-    user_id = update.effective_user.id
-    data = get_group(chat_id)
-
-    if not data["allowed_users"]:
-        data["allowed_users"].append(user_id)
-        save_data()
-        await update.message.reply_text("✅ You are now owner")
-        return
-
-    if user_id not in data["allowed_users"]:
-        return
-
-    try:
-        new_user = int(context.args[0])
-        if new_user not in data["allowed_users"]:
-            data["allowed_users"].append(new_user)
-            save_data()
-            await update.message.reply_text("✅ User added")
-    except:
-        await update.message.reply_text("Usage: /adduser USER_ID")
-
-# ================= SETTINGS =================
-
-async def set_currency(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = str(update.effective_chat.id)
-    user_id = update.effective_user.id
-    data = get_group(chat_id)
-
-    if user_id not in data["allowed_users"]:
-        return
-
-    data["target_currency"] = context.args[0].upper()
-    save_data()
-
-    await update.message.reply_text(f"✅ Currency set to {data['target_currency']}")
-
-async def set_rate(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = str(update.effective_chat.id)
-    user_id = update.effective_user.id
-    data = get_group(chat_id)
-
-    if user_id not in data["allowed_users"]:
-        return
-
-    try:
-        data["rate"] = float(context.args[0])
-        save_data()
-        await update.message.reply_text(f"✅ Rate set to {data['rate']}")
-    except:
-        await update.message.reply_text("❌ Invalid rate")
-
-# ================= TRANSACTIONS + BROADCAST FLOW =================
+# ================= BROADCAST FLOW =================
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global broadcast_state
 
     text = update.message.text.strip()
-    chat_id = update.effective_chat.id
     user_id = update.effective_user.id
-    chat_title = update.effective_chat.title
+    chat_id = update.effective_chat.id
+    data = get_group(chat_id, update.effective_chat.title)
 
-    data = get_group(chat_id, chat_title)
-
-    # ================= BROADCAST FLOW =================
+    # ================= BROADCAST STEP 2 =================
     if user_id in broadcast_state:
         state = broadcast_state[user_id]
 
-        if state["step"] == 1:
-            state["target"] = text
-            state["step"] = 2
-
-            await update.message.reply_text("✍️ Now send message to broadcast")
-            return
-
-        elif state["step"] == 2:
+        if state["step"] == 2:
             msg = text
-            target = broadcast_state[user_id]["target"]
+            target = state["target"]
 
-            # ALL groups
-            if target.upper() == "ALL":
+            # ALL GROUPS
+            if target == "ALL":
                 for gid in group_data.keys():
                     try:
                         await context.bot.send_message(chat_id=int(gid), text=msg)
@@ -186,15 +164,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         pass
 
             else:
-                selected_id = None
-
-                for gid, gdata in group_data.items():
-                    if target.lower() in gdata.get("title", "").lower():
-                        selected_id = gid
-                        break
-
-                if selected_id:
-                    await context.bot.send_message(chat_id=int(selected_id), text=msg)
+                try:
+                    await context.bot.send_message(chat_id=int(target), text=msg)
+                except:
+                    pass
 
             await update.message.reply_text("✅ Broadcast sent")
             del broadcast_state[user_id]
@@ -224,36 +197,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data["balance"] += amount
         data["deposit"] += amount
         data["deposit_count"] += 1
-        action = "Received"
     else:
         data["balance"] -= amount
         data["withdraw"] += amount
         data["withdraw_count"] += 1
-        action = "Paid"
-
-    converted = amount / data["rate"]
-    balance_converted = data["balance"] / data["rate"]
 
     save_data()
 
     await update.message.reply_text(f"""
-📊 Overseas Customer Service
+📊 Updated
 
-{action}: {amount:,.2f} {data['base_currency']}
-Converted: {converted:,.2f} {data['target_currency']}
-
-------------------------------
-Balance: {data['balance']:,.2f}
-Balance: {balance_converted:,.2f}
-
-Total Deposit: {data['deposit']:,.2f}
-Total Withdraw: {data['withdraw']:,.2f}
-
-Deposit Count: {data['deposit_count']}
-Withdraw Count: {data['withdraw_count']}
-Total Count: {data['deposit_count'] + data['withdraw_count']}
-
-Rate: 1 {data['target_currency']} = {data['rate']} {data['base_currency']}
+Balance: {data['balance']}
+Deposit: {data['deposit_count']}
+Withdraw: {data['withdraw_count']}
 """)
 
 # ================= MAIN =================
@@ -264,11 +220,11 @@ def main():
     app_bot = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app_bot.add_handler(CommandHandler("start", start))
-    app_bot.add_handler(CommandHandler("adduser", add_user))
-    app_bot.add_handler(CommandHandler("setcurrency", set_currency))
-    app_bot.add_handler(CommandHandler("setrate", set_rate))
-    app_bot.add_handler(CommandHandler("broadcast", broadcast))
+    app_bot.add_handler(CommandHandler("panel", panel))
 
+    app_bot.add_handler(CallbackQueryHandler(button_handler))
+
+    app_bot.add_handler(MessageHandler(filters.ALL, track_group))
     app_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     Thread(target=run_flask).start()
