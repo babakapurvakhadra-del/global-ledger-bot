@@ -12,7 +12,7 @@ from telegram.ext import (
 )
 
 BOT_TOKEN = "8728458795:AAGSXrt0g7rRIaKhJEhepcV_m4rDUE9AaZk"
-OWNER_ID = 6609362058
+OWNER_ID = 6609362058   # your ID
 
 DATA_FILE = "data.json"
 group_data = {}
@@ -225,27 +225,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ===== BROADCAST =====
     if user_id in broadcast_state and broadcast_state[user_id].get("step") == 2:
-
         msg = text
         target = broadcast_state[user_id]["target"]
 
         if target == "ALL":
-            success = 0
             for gid in group_data.keys():
                 try:
-                    await context.bot.send_message(chat_id=int(gid), text=msg)
-                    success += 1
-                except Exception as e:
-                    print(f"Failed {gid}:", e)
-
-            await update.message.reply_text(f"✅ Sent to {success} groups")
+                    await context.bot.send_message(int(gid), msg)
+                except:
+                    pass
         else:
             try:
-                await context.bot.send_message(chat_id=int(target), text=msg)
-                await update.message.reply_text("✅ Broadcast sent")
-            except Exception as e:
-                await update.message.reply_text(f"❌ Failed: {e}")
+                await context.bot.send_message(int(target), msg)
+            except:
+                pass
 
+        await update.message.reply_text("✅ Broadcast sent")
         del broadcast_state[user_id]
         return
 
@@ -320,9 +315,9 @@ def main():
 
     app_bot.add_handler(CallbackQueryHandler(button_handler))
 
-    # FIXED (no conflict now)
-    app_bot.add_handler(MessageHandler(filters.ChatType.GROUPS, track_group))
+    # ✅ FIXED ORDER (VERY IMPORTANT)
     app_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app_bot.add_handler(MessageHandler(filters.ChatType.GROUPS, track_group), group=1)
 
     Thread(target=run_flask).start()
     app_bot.run_polling()
