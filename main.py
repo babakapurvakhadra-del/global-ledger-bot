@@ -151,8 +151,8 @@ async def track_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
 📌 {chat_title}
 🆔 {chat_id}"""
                 )
-            except:
-                pass
+            except Exception as e:
+                print("Notify error:", e)
 
 # ================= START =================
 
@@ -225,22 +225,27 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ===== BROADCAST =====
     if user_id in broadcast_state and broadcast_state[user_id].get("step") == 2:
+
         msg = text
         target = broadcast_state[user_id]["target"]
 
         if target == "ALL":
+            success = 0
             for gid in group_data.keys():
                 try:
-                    await context.bot.send_message(int(gid), msg)
-                except:
-                    pass
+                    await context.bot.send_message(chat_id=int(gid), text=msg)
+                    success += 1
+                except Exception as e:
+                    print(f"Failed {gid}:", e)
+
+            await update.message.reply_text(f"✅ Sent to {success} groups")
         else:
             try:
-                await context.bot.send_message(int(target), msg)
-            except:
-                pass
+                await context.bot.send_message(chat_id=int(target), text=msg)
+                await update.message.reply_text("✅ Broadcast sent")
+            except Exception as e:
+                await update.message.reply_text(f"❌ Failed: {e}")
 
-        await update.message.reply_text("✅ Broadcast sent")
         del broadcast_state[user_id]
         return
 
@@ -315,7 +320,8 @@ def main():
 
     app_bot.add_handler(CallbackQueryHandler(button_handler))
 
-    app_bot.add_handler(MessageHandler(filters.ALL, track_group))
+    # FIXED (no conflict now)
+    app_bot.add_handler(MessageHandler(filters.ChatType.GROUPS, track_group))
     app_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     Thread(target=run_flask).start()
