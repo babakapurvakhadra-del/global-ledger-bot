@@ -12,6 +12,7 @@ from telegram.ext import (
 )
 
 BOT_TOKEN = "8728458795:AAGSXrt0g7rRIaKhJEhepcV_m4rDUE9AaZk"
+OWNER_ID = 6609362058
 
 DATA_FILE = "data.json"
 group_data = {}
@@ -33,15 +34,15 @@ def run_flask():
 def load_data():
     global group_data
     if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r") as f:
-            try:
+        try:
+            with open(DATA_FILE, "r") as f:
                 group_data.update(json.load(f))
-            except:
-                group_data = {}
+        except:
+            group_data = {}
 
 def save_data():
     with open(DATA_FILE, "w") as f:
-        json.dump(group_data, f)
+        json.dump(group_data, f, indent=2)
 
 # ================= CORE =================
 
@@ -118,7 +119,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         broadcast_state[user_id]["target"] = target
         broadcast_state[user_id]["step"] = 2
 
-        await query.edit_message_text("✍️ Now send broadcast message")
+        await query.edit_message_text("✍️ Send message to broadcast")
 
     elif query.data == "groups":
         msg = "📊 GROUP LIST\n\n"
@@ -141,22 +142,17 @@ async def track_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
         get_group(chat.id, chat.title)
         save_data()
 
-        # 🔔 NOTIFY OWNER WHEN NEW GROUP ADDED
         if is_new:
-            OWNER_ID = 6609362058  # 👈 PUT YOUR USER ID HERE
-
             try:
                 await context.bot.send_message(
                     chat_id=OWNER_ID,
                     text=f"""🚀 Bot added in new group!
 
-📌 Group Name: {chat_title}
-🆔 Group ID: {chat_id}
-
-Now you can use /panel → broadcast"""
+📌 {chat_title}
+🆔 {chat_id}"""
                 )
-            except Exception as e:
-                print("Notify error:", e)
+            except:
+                pass
 
 # ================= START =================
 
@@ -176,7 +172,7 @@ async def add_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("✅ You are OWNER now")
         return
 
-    if user_id not in data["allowed_users"]:
+    if not is_allowed(user_id, data):
         await update.message.reply_text("❌ Not allowed")
         return
 
@@ -189,14 +185,12 @@ async def add_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except:
         await update.message.reply_text("Usage: /adduser USER_ID")
 
-# ================= SET CURRENCY =================
+# ================= SETTINGS =================
 
 async def set_currency(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = str(update.effective_chat.id)
-    user_id = update.effective_user.id
-    data = get_group(chat_id, update.effective_chat.title)
+    data = get_group(update.effective_chat.id, update.effective_chat.title)
 
-    if user_id not in data["allowed_users"]:
+    if update.effective_user.id not in data["allowed_users"]:
         return
 
     try:
@@ -206,14 +200,10 @@ async def set_currency(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except:
         await update.message.reply_text("Usage: /setcurrency USD")
 
-# ================= SET RATE =================
-
 async def set_rate(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = str(update.effective_chat.id)
-    user_id = update.effective_user.id
-    data = get_group(chat_id, update.effective_chat.title)
+    data = get_group(update.effective_chat.id, update.effective_chat.title)
 
-    if user_id not in data["allowed_users"]:
+    if update.effective_user.id not in data["allowed_users"]:
         return
 
     try:
@@ -235,7 +225,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ===== BROADCAST =====
     if user_id in broadcast_state and broadcast_state[user_id].get("step") == 2:
-
         msg = text
         target = broadcast_state[user_id]["target"]
 
@@ -243,21 +232,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for gid in group_data.keys():
                 try:
                     await context.bot.send_message(int(gid), msg)
-                except Exception as e:
-                    print("Broadcast error:", e)
+                except:
+                    pass
         else:
             try:
                 await context.bot.send_message(int(target), msg)
-            except Exception as e:
-                print("Broadcast error:", e)
+            except:
+                pass
 
         await update.message.reply_text("✅ Broadcast sent")
         del broadcast_state[user_id]
         return
 
     # ===== TRANSACTION =====
-
-    if user_id not in data["allowed_users"]:
+    if not is_allowed(user_id, data):
         return
 
     text = text.replace(" ", "")
@@ -286,8 +274,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data["withdraw_count"] += 1
         action = "Paid"
 
-    converted = amount / data["rate"]
-    balance_converted = data["balance"] / data["rate"]
+    rate = data.get("rate", 90.0)
+    converted = amount / rate
+    balance_converted = data["balance"] / rate
 
     save_data()
 
@@ -308,7 +297,7 @@ Total deposit count: {data['deposit_count']}
 Total withdrawal count: {data['withdraw_count']}
 Total count: {data['deposit_count'] + data['withdraw_count']}
 
-Rate: 1 {data['target_currency']} = {data['rate']} INR
+Rate: 1 {data['target_currency']} = {rate} INR
 """)
 
 # ================= MAIN =================
@@ -326,7 +315,7 @@ def main():
 
     app_bot.add_handler(CallbackQueryHandler(button_handler))
 
-    app_bot.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, track_group))
+    app_bot.add_handler(MessageHandler(filters.ALL, track_group))
     app_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     Thread(target=run_flask).start()
